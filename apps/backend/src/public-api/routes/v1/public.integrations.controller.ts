@@ -365,11 +365,11 @@ export class PublicIntegrationsController {
         .split(',')
         .map((origin) => origin.trim())
         .filter(Boolean);
-      let redirectOrigin = '';
+      let allowed = false;
       try {
-        redirectOrigin = new URL(redirectUrl).origin;
+        allowed = allowedOrigins.includes(new URL(redirectUrl).origin);
       } catch (err) {}
-      if (!allowedOrigins.includes(redirectOrigin)) {
+      if (!allowed) {
         throw new HttpException({ msg: 'redirectUrl is not allowed' }, 400);
       }
     }

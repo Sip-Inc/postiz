@@ -69,7 +69,8 @@ What the patches mean to a Public API caller. Every call carries the header `Aut
 
 GitHub Actions are disabled on a new fork; the founder enables them before the first image build.
 
-1. [ ] Repo Settings → Actions → General → allow actions.
+1. [ ] Open the repo's Actions tab and click "I understand my workflows, go ahead and enable them" (also check
+   Settings → Actions → General if the org restricts Actions).
 2. [ ] Disable the upstream workflows that cannot work on the fork:
    ```bash
    for w in build-containers.yml staging-conflicts.yml stale.yml deploy-aws.yml issue-label-triggers.yml codeql.yml; do
@@ -79,9 +80,12 @@ GitHub Actions are disabled on a new fork; the founder enables them before the f
    `build-containers.yml` matters most: it also fires on our tags and tries to push to `gitroomhq`. Keep
    `build.yml` (a free full build on every push). `.github/workflows/eslint` has no `.yml` extension, so GitHub
    does not run it; the two extension workflows are manual-only.
-3. [ ] Build an image by pushing a tag, or by running the workflow against one:
+3. [ ] Build an image, either by pushing a tag:
    ```bash
    git tag v2.25.3-sip.1 <commit> && git push origin v2.25.3-sip.1
+   ```
+   or by running the workflow against an existing tag (this needs `sip-image.yml` on the default branch):
+   ```bash
    gh workflow run sip-image.yml --ref v2.25.3-sip.1 -R Sip-Inc/postiz
    ```
    `Sip image` (`.github/workflows/sip-image.yml`) builds `Dockerfile.dev` for linux/amd64 and pushes
@@ -93,6 +97,8 @@ GitHub Actions are disabled on a new fork; the founder enables them before the f
 The founder runs this later, after a separate yes. Nothing here is done by the delivery run.
 
 ```bash
+gcloud config set project <PROJECT_ID>
+
 # network: own VPC, so no project-wide default-allow-ssh applies
 gcloud compute networks create postiz-net --subnet-mode=auto --project <PROJECT_ID>
 gcloud compute firewall-rules create postiz-allow-web --network postiz-net --direction INGRESS \
@@ -141,9 +147,12 @@ Create it before Caddy's first start so the certificate can be issued.
 
 ## 8. Compose
 
-Start from `docker-compose.yaml` of the official `postiz-docker-compose` repository (the same file as
-`docker-compose.yaml` at the root of this repo at the base), together with its `dynamicconfig/` directory, in
-`/opt/postiz`. Apply these deltas (values are placeholders):
+Every command on the VM from here on runs as root: `sudo -i`, then `mkdir -p /opt/postiz && cd /opt/postiz`.
+
+Start from `docker-compose.yaml` of the official `postiz-docker-compose` repository
+(`gitroomhq/postiz-docker-compose`), together with its `dynamicconfig/` directory, in `/opt/postiz`. Use the official
+repository's files, not the `docker-compose.yaml` at the root of this repo: they are different files. Apply these
+deltas (values are placeholders):
 
 ```yaml
 services:
@@ -151,6 +160,10 @@ services:
     image: ghcr.io/sip-inc/postiz:<tag>        # was ghcr.io/gitroomhq/postiz-app:latest
     env_file: postiz.env                       # replaces the whole `environment:` block
     # `ports: - '4007:5000'` removed: only Caddy is public
+
+  postiz-postgres:
+    environment:                               # only if you set a password in `.env`
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
   caddy:
     image: caddy:2
@@ -166,23 +179,11 @@ services:
     networks:
       - postiz-network
 
-  temporal-postgresql:
-    volumes:
-      - temporal-postgres-data:/var/lib/postgresql/data   # named, was anonymous
-
-  temporal:
-    # `ports: - '7233:7233'` removed
-
-  temporal-ui:
-    ports:
-      - '127.0.0.1:8080:8080'                  # loopback only
-
   # `spotlight` service removed
 
 volumes:
   caddy-data:
   caddy-config:
-  temporal-postgres-data:
 ```
 
 Caddyfile (Caddy obtains and renews HTTPS by itself):
@@ -194,13 +195,20 @@ publish.sipstudio.ai {
 ```
 
 - `postiz.env` is root-owned and `chmod 600`, never committed. It uses `KEY=value` lines (no quotes, no `: `).
-- Why the named Temporal volume: Postiz starts each channel's token-refresh workflow only at connect time and keeps
-  it only in Temporal. If Temporal's database is lost, tokens silently stop refreshing (Instagram tokens die after
-  about 60 days). Recovery if it ever happens: reconnect every channel.
+- The official file already has these Temporal settings. Check they are present and do not add them again, because
+  a duplicate key breaks compose: the named volume `temporal-postgres-data`, Temporal (7233) and Temporal UI (8080)
+  bound to `127.0.0.1` only, and `restart: always` on `temporal-elasticsearch`, `temporal-postgresql`, `temporal`
+  and `temporal-ui`.
+- Why the named Temporal volume must stay (never remove it or make it anonymous): Postiz starts each channel's
+  token-refresh workflow only at connect time and keeps it only in Temporal. If Temporal's database is lost, tokens
+  silently stop refreshing (Instagram tokens die after about 60 days). Recovery if it ever happens: reconnect every
+  channel.
 - Keep `postgres-volume` and `postiz-uploads` as they are: both are persistent, and uploads must survive for
   `STORAGE_PROVIDER=local`.
-- Optionally replace the default Postgres password through `POSTGRES_PASSWORD` in compose's own `.env`, consistent
-  with `DATABASE_URL`.
+- Optionally replace the default Postgres password. The official compose hardcodes `POSTGRES_PASSWORD`, so the
+  `postiz-postgres` delta above is needed and `POSTGRES_PASSWORD` goes in compose's own `.env`. The password is only
+  applied when `postgres-volume` is first created, before the first `docker compose up`, and `DATABASE_URL` in
+  `postiz.env` must use the same password.
 - Reach the Temporal UI through the IAP tunnel:
   `gcloud compute ssh postiz --zone <ZONE> --tunnel-through-iap -- -L 8080:localhost:8080`, then open
   `http://localhost:8080`.
@@ -228,6 +236,7 @@ The founder sets every value. Agents never print or commit them.
 | `REDIS_URL` | the compose Redis |
 | `BACKEND_INTERNAL_URL`, `TEMPORAL_ADDRESS` | as in the official compose |
 | `IS_GENERAL` | as in the official compose |
+| `RUN_CRON` | `true`, as in the official compose; it starts the hourly missing-post recovery workflow |
 | `DISABLE_REGISTRATION` | `false` only until the founder creates the "Sip" organisation and admin user, then `true` and `docker compose up -d` |
 | `STORAGE_PROVIDER` | `local` |
 | `UPLOAD_DIRECTORY`, `NEXT_PUBLIC_UPLOAD_DIRECTORY` | the persistent uploads volume (`/uploads` in the official compose) |
@@ -299,7 +308,7 @@ before deploying a new image.
 4. [ ] Update section 2 (base commit, tag name).
 5. [ ] Push the branch (`git push --force-with-lease origin <branch>`), tag `<new tag>-sip.1`, push the tag and let
    `Sip image` build (section 5).
-6. [ ] On the VM, edit `postiz.image` in `docker-compose.yaml`, then:
+6. [ ] On the VM, as root (`sudo -i`), edit `postiz.image` in `/opt/postiz/docker-compose.yaml`, then:
    ```bash
    cd /opt/postiz
    /opt/postiz/backup.sh
@@ -316,9 +325,10 @@ After the first deploy and after every upgrade.
    `curl -s -H "Authorization: <API key>" https://<domain>/api/public/v1/is-connected` prints
    `{"connected":true}`.
 3. [ ] Run the per-patch checks of section 14.
-4. [ ] `sudo reboot`; when the VM is back, repeat steps 1 and 2, and check that `docker compose ps` shows every
-   service up.
-5. [ ] Run `/opt/postiz/backup.sh` once and see both files in `gcloud storage ls gs://<BUCKET>/`.
+4. [ ] `sudo reboot`; when the VM is back, repeat steps 1 and 2, and check that `docker compose ps -a` (as root in
+   `/opt/postiz`) shows every service up.
+5. [ ] Run `/opt/postiz/backup.sh` once on the VM (as root). Then, from your own workstation's gcloud (not on the VM:
+   its service account cannot list the bucket), see both files in `gcloud storage ls gs://<BUCKET>/`.
 
 ## 14. Manual checks per patch
 
@@ -342,7 +352,7 @@ manual check instead. `<API key>` is the "Sip" organisation's Public API key.
 - **d. is_ai_generated.** Upload a vertical mp4 (`POST /api/public/v1/upload-from-url`) and post it with
   `type: "now"`, `"is_ai_generated": true` and a `thumbnail` image: the Reel shows that cover and Instagram shows
   the "AI info" label. A second Reel without the setting has no label.
-- **e. Token wipe.** `DELETE /api/public/v1/integrations/<id>`, then:
+- **e. Token wipe.** `DELETE /api/public/v1/integrations/<id>`, then, on the VM as root:
   ```bash
   docker exec -it postiz-postgres psql -U postiz-user -d postiz-db-local -c \
     "SELECT id, \"deletedAt\" IS NOT NULL AS deleted, token = '' AS token_cleared, \"refreshToken\" IS NULL AS refresh_cleared FROM \"Integration\" WHERE id = '<id>';"
