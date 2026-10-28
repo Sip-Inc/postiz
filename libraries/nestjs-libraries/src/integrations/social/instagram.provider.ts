@@ -742,6 +742,7 @@ export class InstagramProvider
           )}`
         : ``;
     const isTrialReel = this.assetBoolean(firstPost.settings.is_trial_reel);
+    const isAiGenerated = this.assetBoolean(firstPost.settings.is_ai_generated);
     const medias = await Promise.all(
       firstPost?.media?.map(async (m) => {
         const caption =
@@ -757,10 +758,10 @@ export class InstagramProvider
             ? isStory
               ? `video_url=${m.path}&media_type=STORIES`
               : m?.thumbnail
-              ? `video_url=${m.path}&media_type=REELS&cover_url=${encodeURIComponent(
+              ? `video_url=${m.path}&media_type=REELS&is_ai_generated=${isAiGenerated}&cover_url=${encodeURIComponent(
                   m.thumbnail
                 )}`
-              : `video_url=${m.path}&media_type=REELS&thumb_offset=${
+              : `video_url=${m.path}&media_type=REELS&is_ai_generated=${isAiGenerated}&thumb_offset=${
                   m?.thumbnailTimestamp || 0
                 }`
             : isStory
