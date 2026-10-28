@@ -40,11 +40,23 @@ export const ContinueIntegration: FC<{
 
   // Helper to handle navigation - redirects if logged or returnURL exists, otherwise shows inline
   const navigateOrShow = useCallback(
-    (path: string, returnURL: string | undefined, successMessage: string) => {
+    (
+      path: string,
+      returnURL: string | undefined,
+      successMessage: string,
+      integrationId?: string
+    ) => {
       if (returnURL) {
-        // If returnURL exists, always redirect to it with the path params
-        const params = path.includes('?') ? path.split('?')[1] : '';
-        push(params ? `${returnURL}?${params}` : returnURL);
+        // If returnURL exists, always redirect to it with the path params and
+        // the connected channel id, keeping the query returnURL already has
+        const url = new URL(returnURL, window.location.href);
+        new URLSearchParams(path.split('?')[1] || '').forEach((value, key) =>
+          url.searchParams.set(key, value)
+        );
+        if (integrationId) {
+          url.searchParams.set('id', integrationId);
+        }
+        push(url.toString());
       } else if (logged) {
         // If logged in without returnURL, use normal navigation
         push(path);
@@ -209,7 +221,8 @@ export const ContinueIntegration: FC<{
           onboarding ? '&onboarding=true' : ''
         }`,
         returnURL,
-        'Channel Updated'
+        'Channel Updated',
+        id
       );
     })();
   }, []);
@@ -248,7 +261,8 @@ export const ContinueIntegration: FC<{
             twoStepState.onboarding ? '&onboarding=true' : ''
           }`,
           twoStepState.returnURL,
-          'Channel Added'
+          'Channel Added',
+          twoStepState.integrationId
         );
       } finally {
         setIsSaving(false);
