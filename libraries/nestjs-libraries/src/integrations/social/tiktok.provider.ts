@@ -37,12 +37,10 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
   isBetweenSteps = false;
   convertToJPEG = true;
   scopes = [
-    'video.list',
     'user.info.basic',
-    'video.publish',
-    'video.upload',
     'user.info.profile',
-    'user.info.stats',
+    'video.upload',
+    'video.list',
   ];
   override maxConcurrentJob = 10000;
   dto = TikTokDto;

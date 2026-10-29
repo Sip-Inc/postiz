@@ -821,6 +821,9 @@ export class IntegrationRepository {
       },
       data: {
         deletedAt: new Date(),
+        // Sip: the row stays for history, but keeps no usable credentials
+        token: '',
+        refreshToken: null,
       },
     });
   }

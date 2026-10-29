@@ -346,6 +346,7 @@ export class PublicIntegrationsController {
   async getIntegrationUrl(
     @Param('integration') integration: string,
     @Query('refresh') refresh: string,
+    @Query('redirectUrl') redirectUrl: string,
     @GetOrgFromRequest() org: Organization
   ) {
     Sentry.metrics.count('public_api-request', 1);
@@ -355,6 +356,22 @@ export class PublicIntegrationsController {
         .includes(integration)
     ) {
       throw new HttpException({ msg: 'Integration not allowed' }, 400);
+    }
+
+    // Sip: the connect ends on redirectUrl, so only allowlisted origins are
+    // accepted - anything else would be an open redirect
+    if (redirectUrl) {
+      const allowedOrigins = (process.env.PORTAL_RETURN_ORIGINS || '')
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean);
+      let allowed = false;
+      try {
+        allowed = allowedOrigins.includes(new URL(redirectUrl).origin);
+      } catch (err) {}
+      if (!allowed) {
+        throw new HttpException({ msg: 'redirectUrl is not allowed' }, 400);
+      }
     }
 
     // A provider migrated via MIGRATE_PROVIDERS reconnects through its target
@@ -383,6 +400,10 @@ export class PublicIntegrationsController {
 
       if (refresh) {
         await ioRedis.set(`refresh:${state}`, refresh, 'EX', 3600);
+      }
+
+      if (redirectUrl) {
+        await ioRedis.set(`redirect:${state}`, redirectUrl, 'EX', 3600);
       }
 
       await ioRedis.set(`organization:${state}`, org.id, 'EX', 3600);
